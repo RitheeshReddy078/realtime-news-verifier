@@ -24,15 +24,27 @@ def analyze_claim_with_llm(claim: str, evidence_list: list[dict]) -> dict:
             "sources": []
         }
 
+    
     if not evidence_list:
         return {
             "verdict": "UNVERIFIED",
             "confidence_score": 0,
-            "explanation": "Insufficient live search evidence found to verify or refute this claim.",
+            "explanation": (
+                "We could not find sufficient relevant evidence to confirm "
+                "or contradict this claim. This does not mean the claim is "
+                "false; it means the available evidence is inconclusive. "
+                "Check reliable primary sources or try again later."
+            ),
             "past_events": [],
             "current_and_future_updates": [],
-            "sources": []
+            "sources": [],
+            "evidence_status": "INSUFFICIENT_EVIDENCE",
+            "recommended_action": (
+                "Seek confirmation from reliable primary sources, "
+                "such as official organizations or original research."
+            )
         }
+
 
     # Dynamic current date string
     today_str = datetime.now().strftime("%B %d, %Y")
@@ -53,11 +65,18 @@ USER CLAIM: "{claim}"
 RETRIEVED EVIDENCE:
 {formatted_evidence}
 
+
 INSTRUCTIONS:
-1. Compare the claim against the retrieved evidence relative to TODAY'S DATE ({today_str}).
-2. Extract past verified facts/actions matching the user query and specify their relative time (e.g., "occurred on September 25th - 4 days ago").
-3. Extract ongoing status, current updates, or upcoming roadmap targets related to the query.
-4. Output MUST be valid JSON strictly matching this schema:
+1. Evaluate whether each evidence snippet directly addresses the specific USER CLAIM, not merely the same general topic.
+2. Return SUPPORTED only when reliable evidence directly supports the claim.
+3. Return CONTRADICTED only when reliable evidence directly contradicts the claim.
+4. Return MISLEADING when the claim substantially misrepresents evidence or omits important context.
+5. Return UNVERIFIED when evidence is missing, indirect, weak, unrelated, or inconclusive.
+6. Do not treat the absence of evidence as proof that the claim is false.
+7. Do not invent events, dates, announcements, or future updates. Include them only when directly supported by retrieved evidence.
+8. If evidence is insufficient or unrelated, use a low confidence score (0–20), explain what could not be established, and leave past_events and current_and_future_updates empty.
+9. Confidence must reflect the strength and relevance of the evidence, not merely how certain the answer sounds.
+10. Output MUST be valid JSON strictly matching this schema:
 
 {{
   "verdict": "SUPPORTED|CONTRADICTED|MISLEADING|UNVERIFIED",
