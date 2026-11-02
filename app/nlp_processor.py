@@ -1,9 +1,8 @@
-
 import re
 import spacy
-import numpy as np
 from sentence_transformers import SentenceTransformer, util
 
+from app.search import get_source_metadata
 
 # Load spaCy for sentence segmentation and linguistic analysis.
 nlp = spacy.load("en_core_web_sm")
@@ -11,12 +10,9 @@ nlp = spacy.load("en_core_web_sm")
 # Lightweight embedding model for semantic similarity.
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-
 def extract_sentences(text: str) -> list[str]:
-    """
-    Clean text and split it into meaningful sentences.
-    Ignore empty and excessively short fragments.
-    """
+    """Clean text and split it into meaningful sentences."""
+
     if not isinstance(text, str) or not text.strip():
         return []
 
@@ -31,30 +27,6 @@ def extract_sentences(text: str) -> list[str]:
 
     return sentences
 
-
-def _get_claim_keywords(claim: str) -> set[str]:
-    """
-    Extract meaningful words from a claim.
-
-    These keywords help prevent sentences about the same general
-    topic from being accepted as evidence for a specific claim.
-    """
-    doc = nlp(claim)
-    keywords = set()
-
-    for token in doc:
-        if (
-            not token.is_stop
-            and not token.is_punct
-            and not token.is_space
-            and len(token.text) > 2
-            and token.is_alpha
-        ):
-            keywords.add(token.lemma_.lower())
-
-    return keywords
-
-
 def filter_relevant_evidence(
     claim: str,
     articles: list[dict],
@@ -62,27 +34,17 @@ def filter_relevant_evidence(
     top_k: int = 5
 ) -> list[dict]:
     """
-    Rank candidate sentences using semantic similarity and
-    claim-keyword overlap.
+    Rank candidate sentences using semantic similarity.
 
-    A sentence is accepted when:
-    1. It meets the minimum similarity threshold.
-    2. It shares meaningful keywords with the claim, or has
-       exceptionally high semantic similarity.
-
-    Duplicate sentences are removed, and results are limited
-    per source so one article cannot dominate the evidence list.
-
-    Returns dictionaries compatible with the existing main.py
-    and rag_engine.py.
+    Carries source metadata from the search results into
+    the final evidence dictionaries.
     """
+
     if not isinstance(claim, str) or not claim.strip():
         return []
 
-    if not articles or top_k <= 0:
+    if not isinstance(articles, list) or not articles or top_k <= 0:
         return []
-
-    claim_keywords = _get_claim_keywords(claim)
 
     # Collect candidate sentences and their source metadata.
     candidate_pool = []
@@ -92,9 +54,22 @@ def filter_relevant_evidence(
         if not isinstance(article, dict):
             continue
 
-        title = article.get("title", "") or ""
-        url = article.get("url", "") or ""
-        content = article.get("content", "") or ""
+        title = article.get("title", "")
+        url = article.get("url", "")
+        content = article.get("content", "")
+
+        title = title.strip() if isinstance(title, str) else ""
+        url = url.strip() if isinstance(url, str) else ""
+
+        # Use metadata supplied by search.py.
+        # Derive it when processing older or manually supplied articles.
+        metadata = get_source_metadata(url)
+
+        domain = article.get("domain") or metadata["domain"]
+        source_category = (
+            article.get("source_category")
+            or metadata["source_category"]
+        )
 
         for sentence in extract_sentences(content):
             normalized_sentence = sentence.casefold()
@@ -106,14 +81,16 @@ def filter_relevant_evidence(
 
             candidate_pool.append({
                 "sentence": sentence,
-                "title": title,
-                "url": url
+                "title": title or "Unknown source",
+                "url": url,
+                "domain": domain,
+                "source_category": source_category
             })
 
     if not candidate_pool:
         return []
 
-    # Encode the claim and candidate sentences.
+    # Encode claim and candidate sentences.
     claim_embedding = embedding_model.encode(
         claim,
         convert_to_tensor=True,
@@ -139,44 +116,23 @@ def filter_relevant_evidence(
 
     ranked_evidence = []
 
-    # Exceptionally high similarity can allow paraphrases that
-    # use different words, but it is not proof that a claim is true.
+    # Preserve the existing high similarity requirement.
     high_similarity_threshold = max(threshold + 0.25, 0.75)
 
     for idx, score in enumerate(similarity_scores):
         score = float(score)
 
-        if score < threshold:
+        if score < high_similarity_threshold:
             continue
 
         candidate = candidate_pool[idx]
-        sentence_doc = nlp(candidate["sentence"])
-
-        sentence_keywords = {
-            token.lemma_.lower()
-            for token in sentence_doc
-            if (
-                not token.is_stop
-                and not token.is_punct
-                and not token.is_space
-                and len(token.text) > 2
-                and token.is_alpha
-            )
-        }
-
-        keyword_overlap = claim_keywords.intersection(
-            sentence_keywords
-        )
-
-        # Require stronger semantic relevance.
-        # Keyword overlap alone is not sufficient evidence.
-        if score < high_similarity_threshold:
-            continue
 
         ranked_evidence.append({
             "evidence_sentence": candidate["sentence"],
             "source_title": candidate["title"],
             "source_url": candidate["url"],
+            "source_domain": candidate["domain"],
+            "source_category": candidate["source_category"],
             "similarity_score": round(score, 4)
         })
 
@@ -186,7 +142,7 @@ def filter_relevant_evidence(
         reverse=True
     )
 
-    # Limit the number of snippets taken from each source.
+    # Limit evidence snippets per source.
     final_evidence = []
     source_counts = {}
 
@@ -197,6 +153,7 @@ def filter_relevant_evidence(
             continue
 
         final_evidence.append(item)
+
         source_counts[source_url] = (
             source_counts.get(source_url, 0) + 1
         )
@@ -206,13 +163,12 @@ def filter_relevant_evidence(
 
     return final_evidence
 
-
 if __name__ == "__main__":
     from app.search import fetch_live_news_evidence
 
     test_claim = "ISRO plans multiple space missions"
 
-    print(f"Testing NLP pipeline for claim: '{test_claim}'...\n")
+    print(f"Testing NLP pipeline for claim: '{test_claim}'\n")
 
     raw_articles = fetch_live_news_evidence(
         test_claim,
@@ -226,22 +182,18 @@ if __name__ == "__main__":
         top_k=3
     )
 
-    print(
-        f"Extracted {len(top_evidence)} relevant evidence "
-        "sentences:\n"
-    )
+    print(f"Extracted {len(top_evidence)} relevant evidence sentences:\n")
 
     if not top_evidence:
         print(
             "No sufficiently relevant evidence found. "
-            "The claim should remain unverified until better "
-            "evidence is retrieved."
+            "The claim should remain unverified until better evidence is retrieved."
         )
 
     for idx, item in enumerate(top_evidence, 1):
         print(f"{idx}. Score: {item['similarity_score']}")
         print(f"   Sentence: {item['evidence_sentence']}")
-        print(
-            f"   Source: {item['source_title']} "
-            f"({item['source_url']})\n"
-        )
+        print(f"   Source: {item['source_title']}")
+        print(f"   Domain: {item['source_domain']}")
+        print(f"   Category: {item['source_category']}")
+        print(f"   URL: {item['source_url']}\n")
