@@ -1,3 +1,4 @@
+
 import os
 import json
 import time
@@ -383,19 +384,30 @@ OUTPUT SCHEMA:
 }}
 """
 
+    # Primary model was tested successfully with your API key.
+    # Other models are fallbacks, not guaranteed to be available.
     candidate_models = [
-        "gemini-3.8-flash",
+        "gemini-3.6-flash",
         "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-2.5-flash"
+        "gemini-flash-latest",
+        "gemini-flash-lite-latest"
     ]
 
-    client = genai.Client(api_key=LLM_API_KEY)
+    try:
+        client = genai.Client(api_key=LLM_API_KEY)
+    except Exception as e:
+        return create_fallback_report(
+            f"Could not initialize Gemini client: {str(e)}",
+            sources
+        )
+
     last_error = None
 
     for model_name in candidate_models:
 
         try:
+            print(f"Trying Gemini model: {model_name}")
+
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
@@ -411,15 +423,28 @@ OUTPUT SCHEMA:
 
             parsed_result = json.loads(response.text)
 
-            return validate_llm_response(
+            # Validate Gemini's response and return it directly.
+            # No rigid two-domain rule is applied here.
+            result = validate_llm_response(
                 parsed_result,
                 sources,
                 evidence_count=len(cleaned_evidence)
             )
 
+            print(f"Gemini analysis successful using {model_name}")
+
+            return result
+
         except Exception as e:
             last_error = e
-            time.sleep(1)
+
+            print(
+                f"Gemini model {model_name} failed: {str(e)}"
+            )
+
+            # Brief pause before trying the next fallback model.
+            if model_name != candidate_models[-1]:
+                time.sleep(1)
 
     print(
         "Error calling LLM after trying fallback models:",
@@ -427,7 +452,8 @@ OUTPUT SCHEMA:
     )
 
     return create_fallback_report(
-        f"Failed to perform LLM analysis: {str(last_error)}",
+        f"Failed to perform LLM analysis after trying available models: "
+        f"{str(last_error)}",
         sources
     )
 

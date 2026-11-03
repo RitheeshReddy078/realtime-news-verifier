@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.init_db import init_db
-from app.search import fetch_live_news_evidence
+from app.search import fetch_claim_evidence
 from app.nlp_processor import filter_relevant_evidence
 from app.rag_engine import analyze_claim_with_llm
 from app.crud import save_verification_result
@@ -59,7 +59,7 @@ def verify_claim(
 
     try:
         # 1. Retrieve live search results.
-        articles = fetch_live_news_evidence(
+        articles = fetch_claim_evidence(
             claim,
             max_results=5
         )
@@ -86,6 +86,7 @@ def verify_claim(
                 "past_events": [],
                 "current_and_future_updates": [],
                 "sources": [],
+                "evidence_analysis": [],
                 "evidence_status": "INSUFFICIENT_EVIDENCE",
                 "recommended_action": (
                     "Check reliable primary sources or try again later."
@@ -105,13 +106,38 @@ def verify_claim(
             report
         )
 
-        # 5. Determine evidence status.
+        # 5. Retrieve evidence analysis.
+        evidence_analysis = report.get(
+            "evidence_analysis",
+            []
+        )
+
+        if not isinstance(evidence_analysis, list):
+            evidence_analysis = []
+
+        # 6. Count each evidence classification.
+        stance_counts = {
+            "SUPPORTING": 0,
+            "CONTRADICTING": 0,
+            "CONTEXTUAL": 0
+        }
+
+        for item in evidence_analysis:
+            if not isinstance(item, dict):
+                continue
+
+            stance = item.get("stance")
+
+            if stance in stance_counts:
+                stance_counts[stance] += 1
+
+        # 7. Determine evidence status.
         evidence_status = report.get(
             "evidence_status",
             "EVIDENCE_FOUND" if evidence else "INSUFFICIENT_EVIDENCE"
         )
 
-        # 6. Return the complete verification report.
+        # 8. Return the complete verification report.
         return {
             "claim_id": saved_claim.id,
             "claim": claim,
@@ -124,12 +150,20 @@ def verify_claim(
                 []
             ),
 
-            # Source metadata is now included.
+            # Source metadata.
             "sources": report.get("sources", []),
 
-            # Evidence includes domain, category and similarity score.
+            # Original evidence sentences.
             "evidence_count": len(evidence),
             "evidence": evidence,
+
+            # Individual evidence classifications.
+            "evidence_analysis": evidence_analysis,
+
+            # Evidence classification counts.
+            "supporting_evidence_count": stance_counts["SUPPORTING"],
+            "contradicting_evidence_count": stance_counts["CONTRADICTING"],
+            "contextual_evidence_count": stance_counts["CONTEXTUAL"],
 
             # Additional verification information.
             "evidence_status": evidence_status,

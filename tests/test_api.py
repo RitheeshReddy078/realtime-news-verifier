@@ -28,7 +28,7 @@ def test_verify_with_insufficient_evidence():
 
     try:
         with patch(
-            "app.main.fetch_live_news_evidence",
+            "app.main.fetch_claim_evidence",
             return_value=[]
         ), patch(
             "app.main.filter_relevant_evidence",
@@ -128,7 +128,7 @@ def test_verify_with_relevant_evidence():
 
     try:
         with patch(
-            "app.main.fetch_live_news_evidence",
+            "app.main.fetch_claim_evidence",
             return_value=[article]
         ), patch(
             "app.main.filter_relevant_evidence",
@@ -202,7 +202,7 @@ def test_verify_returns_source_metadata():
 
     try:
         with patch(
-            "app.main.fetch_live_news_evidence",
+            "app.main.fetch_claim_evidence",
             return_value=[{"title": "ISRO Mission Update"}]
         ), patch(
             "app.main.filter_relevant_evidence",
