@@ -1,14 +1,19 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import get_db, engine
+from sqlalchemy import text
 from app.init_db import init_db
 from app.search import fetch_claim_evidence
 from app.nlp_processor import filter_relevant_evidence
-from app.rag_engine import analyze_claim_with_llm
+from app.rag_engine import (
+    analyze_claim_with_llm,
+    check_gemini_health,
+)
 from app.crud import save_verification_result
 from app.models import ClaimRecord
 
@@ -23,6 +28,17 @@ app = FastAPI(
     description="Verify news claims using live web evidence and AI analysis.",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 class ClaimRequest(BaseModel):
@@ -42,7 +58,24 @@ def home():
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    database_status = "operational"
+    gemini_status = "operational"
+
+    # Database health check
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception:
+        database_status = "unavailable"
+
+    # Gemini health check
+    gemini_status = check_gemini_health()
+
+    return {
+        "status": "healthy",
+        "database": database_status,
+        "gemini": gemini_status,
+    }
 
 @app.post("/verify")
 def verify_claim(
@@ -184,6 +217,7 @@ def verify_claim(
             detail=f"Verification failed: {type(exc).__name__}: {exc}",
         ) from exc
 
+
 @app.get("/history")
 def get_verification_history(
     db: Session = Depends(get_db),
@@ -191,7 +225,6 @@ def get_verification_history(
     records = (
         db.query(ClaimRecord)
         .order_by(ClaimRecord.created_at.desc())
-        .limit(50)
         .all()
     )
 

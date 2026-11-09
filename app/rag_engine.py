@@ -1,4 +1,3 @@
-
 import os
 import json
 import time
@@ -11,6 +10,26 @@ from google.genai import types
 load_dotenv()
 
 LLM_API_KEY = os.getenv("LLM_API_KEY")
+
+def check_gemini_health():
+    """
+    Check Gemini API connectivity without generating content.
+    """
+
+    if not LLM_API_KEY or LLM_API_KEY == "your_actual_openai_or_gemini_api_key_here":
+        return "unavailable"
+
+    try:
+        client = genai.Client(api_key=LLM_API_KEY)
+
+        # Check whether the configured primary model is accessible.
+        client.models.get(model="gemini-3.6-flash")
+
+        return "operational"
+
+    except Exception as e:
+        print(f"Gemini health check failed: {type(e).__name__}: {e}")
+        return "unavailable"
 
 VALID_VERDICTS = {
     "SUPPORTED",
