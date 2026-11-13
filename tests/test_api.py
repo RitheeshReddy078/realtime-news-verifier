@@ -18,7 +18,12 @@ def test_health_endpoint():
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "healthy"}
+
+    data = response.json()
+
+    assert data["status"] == "healthy"
+    assert data["database"] == "operational"
+    assert data["gemini"] == "operational"
 
 # Test 3: Check verification when no relevant evidence is found
 def test_verify_with_insufficient_evidence():
